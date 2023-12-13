@@ -1,19 +1,26 @@
 const express = require('express');
-const { graphqlHTTP } = require('express-graphql');
-const { buildSchema } = require('graphql');
+// const graphqlHTTP = require('express-graphql');
+// const { buildSchema } = require('graphql');
+const { ApolloServer, gql } = require('apollo-server-express');
 const mongoose = require('mongoose');
 const User = require('./model/users');
 const Article = require('./model/articles');
 const Comment = require('./model/comments');
-const app = express();
+const bcrypt = require('bcryptjs');
+
 
 mongoose.connect("mongodb://127.0.0.1:27017/graphql-project");
 
-let schema = buildSchema(`
+let typeDefs = gql`
 
     type Query {
+        user : User!
         getAllUser(page : Int, limit : Int) : userData
         getUser(id : ID!) : User
+    }
+
+    type Mutation {
+        createUser(input : UserInput!) : User!
     }
 
     type User {
@@ -57,39 +64,83 @@ let schema = buildSchema(`
         comments : [Comment]
     }
 
-    
-`);
+    input UserInput {
+        fname : String!
+        lname : String!
+        age : Int!
+        gender : Gender!
+        email : String!
+        password : String!
+    }
+`;
 
-let resolver = {
-    
-
-    getAllUser : async (args) => {
-        let page = args.page || 1;
-        let limit = args.limit || 10;
-        // const users = await User.find({}).skip((page - 1) * limit).limit(limit);
-        const users = await User.paginate({}, {page, limit, populate : [{ path : 'articles', populate : ['comments']}]});
-        return {
-            users : users.docs,
-            paginate : {
-                total : users.total,
-                limit : users.limit,
-                page : users.page,
-                pages : users.pages
+let resolvers = {
+    Query: {
+       
+        getAllUser: async (parent, args) => {
+            let page = args.page || 1;
+            let limit = args.limit || 10;
+            // const users = await User.find({}).skip((page - 1) * limit).limit(limit);
+            const users = await User.paginate({}, { page, limit });
+            return {
+                users: users.docs,
+                paginate: {
+                    total: users.total,
+                    limit: users.limit,
+                    page: users.page,
+                    pages: users.pages
+                }
             }
+        },
+
+        getUser: async (parent, args) => {
+            const user = await User.findById(args.id)
+            return user;
         }
     },
 
-    getUser : async (args) => {
-        const user = await User.findById(args.id)
-        return user;
+    Mutation: {
+        createUser: async (parent, args) => {
+            const salt = bcrypt.genSaltSync(15);
+            const hash = bcrypt.hashSync(args.input.password, salt);
+            const user = await new User({
+                fname: args.input.fname,
+                lname: args.input.lname,
+                age: args.input.age,
+                gender: args.input.gender,
+                email: args.input.email,
+                password: hash
+            })
+
+            user.save();
+            return user;
+        }
+    },
+
+    User: {
+        articles: async (parent, args) => await Article.find({ user: parent.id })
+    },
+
+    Article: {
+        comments: async (parent, args) => await Comment.find({ article: parent.id })
     }
+
+
+
 }
+async function initialisingServer() {
+    const app = express();
+    const server = new ApolloServer({ typeDefs, resolvers })
+    await server.start()
+    server.applyMiddleware({ app })
 
-app.use('/graphql', graphqlHTTP({
-    schema : schema,
-    rootValue : resolver,
-    graphiql : true
-}))
+
+    // app.use('/graphql', graphqlHTTP({
+    //     schema : schema,
+    //     graphiql : true
+    // }))
 
 
-app.listen(5000, () => {console.log('server run on port 5000 ...')});
+    app.listen(4000, () => { console.log('server run on port 4000 ...') });
+}
+initialisingServer()
